@@ -6,15 +6,11 @@
   "dependencies": {
     "follow-redirects": "^1.12.1",
     "https": "^1.0.0",
-    "xlsx": "^0.17.0"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://imesut@bitbucket.org/wewalk/localizer.git"
   },
   "author": "WeWALK Technology",
   "license": "ISC",

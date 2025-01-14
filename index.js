@@ -1,6 +1,44 @@
-/*
-Requirements
-*/
+// npm run localizer -f Localization.xlsx -p ios/android/web/backend/all -cache_duration 1440/any_minute/0 -document xlsxFileUrl
+
+const args = process.argv
+const fileNameIndex = args.indexOf("-f")
+const platformIndex = args.indexOf("-p")
+const cacheIndex = args.indexOf("-cache_duration")
+const documentIndex = args.indexOf("-document")
+
+const PLATFORMS = {
+    ios: {
+        name: "ios",
+        key: "ios_key"
+    },
+    ios_infoplist: {
+        name: "ios_infoplist",
+        key: "ios_infoplist_key"
+    },
+    android: {
+        name: "android",
+        key: "android_key"
+    },
+    web: {
+        name: "web",
+        key: "web_key"
+    },
+    backend: {
+        name: "backend",
+        key: "backend_key"
+    }
+}
+
+let document = documentIndex > 0 && args[documentIndex + 1] !== undefined ? args[documentIndex + 1] : "https://docs.google.com/spreadsheets/d/e/2PACX-1vR.....B00gysnvSqjzeb592gkE/pub?output=xlsx"
+let fileName = fileNameIndex > 0 && args[fileNameIndex + 1] !== undefined ? args[fileNameIndex + 1] : "Localization.xlsx"
+let platform = platformIndex > 0 && args[platformIndex + 1] !== undefined ? args[platformIndex + 1] : "all"
+let cache = cacheIndex > 0 && args[cacheIndex + 1] !== undefined ? args[cacheIndex + 1] : 1440
+
+// TODO: logic to download localization file.
+
+
+// Requirements
+
 let XLSX = require('xlsx');
 let fs = require('fs');
 // var https = require('https');
@@ -17,68 +55,81 @@ String.prototype.replaceAll = function (search, replacement) {
 
 generateLocalization();
 
-async function generateLocalization() {
-    /*
-    Init
-    */
-    let table = XLSX.readFile('Localization.xlsx');
+// TODO: update for params
+// TODO: xcstringcatalog support
 
-    let sheet = table.Sheets[table.SheetNames[0]]; // First Sheet: Localisations
+function generateLocalization() {
+    // Read cached file.
+    let table = XLSX.readFile(fileName);
+
+
+
+    // First Sheet: Localisations
+    let sheet = table.Sheets[table.SheetNames[0]];
     let list = XLSX.utils.sheet_to_json(sheet);
+    let platformNamesForSeparateFileLocalizations = [PLATFORMS.android.name, PLATFORMS.ios.name]
 
-    let parameterSheet = table.Sheets[table.SheetNames[1]]; // Second Sheet: Parameters
-    let parameters = XLSX.utils.sheet_to_json(parameterSheet)[0];
+    let headers = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0]
+    let langCodes = headers.filter(name => !name.endsWith("_key"))
 
-    let keys = list.shift(); // Retuns language names
-    const platforms = ["android", "ios", "voice_menu", "ios_info_plist", "service"];
+    // Platforms with single localization file
+    let backendList = list.filter(item => item[PLATFORMS.backend.key] !== undefined)
+        .map(item => {
+            const returnItem = {};
+            langCodes.forEach(lang => returnItem[lang] = item[lang]);
+            return { [item[PLATFORMS.backend.key]]: returnItem };
+        });
 
-    let langCodes = Object.keys(keys).splice(6); // Why 6: #, android_key, ios_key, ios_plist_key, voice_key, speaker_key
-    let resource = {
-        android: {},
-        ios: {},
-        ios_info_plist: {},
-        voice_menu: {},
-        service: {},
-    };
+    let webList = list.filter(item => item[PLATFORMS.web.key] !== undefined)
+        .map(item => {
+            const returnItem = {};
+            langCodes.forEach(lang => returnItem[lang] = item[lang]);
+            return { [item[PLATFORMS.web.key]]: returnItem };
+        });
 
-    await createDirectories();
 
-    for (var i in langCodes) {
-        let langCode = langCodes[i];
-        // Adding language arrays to main resource
-        resource.android[langCode] = "";
-        resource.ios[langCode] = "";
-        resource.voice_menu[langCode] = "";
-        resource.ios_info_plist[langCode] = "";
-        resource.service[langCode] = "";
-    }
 
-    /*
-    Iterating XLSX File
-    */
+    // Platforms with separate localization files
+    // initialize object with platform sub objects
+    var resource = {}
+    Object.keys(PLATFORMS).forEach(platform => {
+        if (PLATFORMS[platform].name !== PLATFORMS.backend.name || PLATFORMS[platform].name !== PLATFORMS.web.name) {
+            resource[PLATFORMS[platform].name] = {}
+        }
+    });
+
+    // create output files
+    createDirectories();
+
+    // Adding language arrays to main resource
+    langCodes.forEach(langCode => {
+        Object.keys(PLATFORMS).forEach(platform => {
+            if (PLATFORMS[platform].name !== PLATFORMS.backend.name || PLATFORMS[platform].name !== PLATFORMS.web.name) {
+                resource[PLATFORMS[platform].name][langCode] = ""
+            }
+        });
+    });
+
+    // Iterating Cached XLSX File
     let lastElem = false
     for (var i in list) {
         if (i == list.length - 1) {
             lastElem = true
             console.log("lastelem" + i + " --- " + list.length)
         }
-        // console.log("lastelem" + i + " --- " + list.length)
 
         let row = list[i];
+
         for (var j in langCodes) {
             let langCode = langCodes[j];
-            if (!!row.voice_menu_key) resource.voice_menu[langCode] += processText("voice_menu", langCode, row.voice_menu_key, row[langCode], undefined);
-            if (!!row.android_key) resource.android[langCode] += processText("android", langCode, row.android_key, "", row[langCode], undefined);
-            if (!!row.ios_key) {
-                if (String(row.ios_key).startsWith("NS")) {
-                    resource.ios_info_plist[langCode] += processText("ios", langCode, "", row.ios_key, row[langCode], undefined);
+
+            if (!!row[PLATFORMS.android.key]) resource.android[langCode] += processText(PLATFORMS.android, langCode, row[PLATFORMS.android.key], row[langCode], lastElem);
+            if (!!row[PLATFORMS.ios.key]) {
+                if (String(row[PLATFORMS.ios.key]).startsWith("NS")) {
+                    resource.ios_infoplist[langCode] += processText(PLATFORMS.ios_infoplist, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
+                } else {
+                    resource.ios[langCode] += processText(PLATFORMS.ios, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
                 }
-                else {
-                    resource.ios[langCode] += processText("ios", langCode, "", row.ios_key, row[langCode], undefined);
-                }
-            }
-            if (!String(row.ios_key).startsWith("NS")) {
-                resource.service[langCode] += processText("service", langCode, row.android_key, row.ios_key, row.plist_key, row.voice_key, row.speaker_key, row[langCode], lastElem);
             }
         }
     }
@@ -86,10 +137,10 @@ async function generateLocalization() {
     /*{{А-2}}
     Text Helper Funtion
     */
-    function processText(platform, lang, and_key, key, plistKey, voiceKey, speakerKey, value, lastElem) {
+    function processText(platform, lang, key, value, lastElem) {
         value = String(value).replaceAll("\n", "\\n");
-        switch (platform) {
-            case "android":
+        switch (platform.name) {
+            case PLATFORMS.android.name:
                 if (lang === "ar") {
                     // This dirty hack will be solved as {{O-n}} & {{O}} replacement rather than {{0-n}} {{0}}
                     value = value.replaceAll('\{\{(O-)([0-9])\}\}', '%$2$d'); //{{O-n}}
@@ -105,8 +156,9 @@ async function generateLocalization() {
                 }
                 value = value.replaceAll("'", String.fromCharCode(92) + "'");
                 value = value.replaceAll('"', String.fromCharCode(92) + '"');
-                return `<string name="${and_key}">${value}</string>\n`;
-            case "ios":
+                return `<string name="${key}">${value}</string>\n`;
+            case PLATFORMS.ios_infoplist.name:
+            case PLATFORMS.ios.name:
                 if (lang === "ar") {
                     // This dirty hack will be solved as {{O-n}} & {{O}} replacement rather than {{0-n}} {{0}}
                     value = value.replaceAll('\{\{(O-)([0-9])\}\}', 'arabicparam:%$2$d'); //{{O-n}}
@@ -122,49 +174,6 @@ async function generateLocalization() {
                 value = value.replaceAll('\{\{(A)\}\}', '%@'); //{{A}}                    
                 value = value.replaceAll('"', String.fromCharCode(92) + '"');
                 return `"${key}" = "${value}";\n`;
-            case "service":
-                if (lang === "ar") {
-                    // This dirty hack will be solved as {{O-n}} & {{O}} replacement rather than {{0-n}} {{0}}
-                    value = value.replaceAll('\{\{(O-)([0-9])\}\}', 'arabicparam:%$2$d'); //{{O-n}}
-                    value = value.replaceAll('\{\{(O)([0-9])\}\}', 'arabicparam:%$2$d'); //{{O-n}}
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', 'arabicparam:%$2$d%'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', 'arabicparam:%$2$#s'); //{{A-n}} 
-                } else {
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', '%$2$d'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', '%$2$#s'); //{{A-n}} 
-                    value = value.replaceAll('\{\{(А-)([0-9])\}\}', '%$2$#s'); //{{A-n}} 
-                }
-                value = value.replaceAll('\{\{(0)\}\}', '%d'); //{{0}}
-                value = value.replaceAll('\{\{(O)\}\}', '%d'); //{{0}}
-                value = value.replaceAll('\{\{(A)\}\}', '%#s'); //{{A}}                    
-                value = value.replaceAll('\{\{(А)\}\}', '%#s'); //{{A}}                    
-                value = value.replaceAll('"', String.fromCharCode(92) + '"');
-
-                let retunString = "\n"
-                if (and_key && and_key.length > 0) {
-                    retunString = retunString + `     "andKey": "${and_key}",\n`     
-                }
-                if (key && key.length > 0) {
-                    retunString = retunString + `     "key": "${key}",\n`     
-                }
-                if (plistKey && plistKey.length > 0) {
-                    retunString = retunString + `     "plistKey": "${plistKey}",\n`     
-                }
-                if (voiceKey && voiceKey.length > 0) {
-                    retunString = retunString + `     "voiceKey": "${voiceKey}",\n`     
-                }
-                if (speakerKey && speakerKey.length > 0) {
-                    retunString = retunString + `     "speakerKey": "${speakerKey}",\n`     
-                }
-                retunString = retunString + `     "value": "${value}",\n     "languageKey": "${lang}"\n`
-
-                if (!lastElem)
-                    return `{${retunString}},\n`;
-                else
-                    return `{${retunString}}\n`;
-
-            case "voice_menu":
-                return `say -v ${parameters[lang + "_voice_name"]} "${value}" -o ${lang}_${key}.aiff\n`;
             default:
                 return;
         }
@@ -172,132 +181,103 @@ async function generateLocalization() {
 
     writeFiles();
 
+    fs.writeFileSync("outputs/backend.json", JSON.stringify(backendList, null, 4), { flag: 'w' }, (e) => {
+        if (e) console.log(e);
+    });
+
+    fs.writeFileSync("outputs/web.json", JSON.stringify(webList, null, 4), { flag: 'w' }, (e) => {
+        if (e) console.log(e);
+    });
+
     /*
     Writing Files
     */
 
     function writeFiles() {
-        for (var i in platforms) {
-            let platform = platforms[i];
-            let voice_menu_data = "";
-            let service_data = "";
 
+        platformNamesForSeparateFileLocalizations.forEach(platformName => {
 
-            if (platform === "service") {
-                service_data += `{\n"languages": [\n`
-            }
-            var lastElem = false
-            for (var j in langCodes) {
-                if (lastElem === langCodes - 1) {
-                    lastElem = true
-                }
-                let lang = langCodes[j];
-                let data = resource[platform][lang];
-                if (platform === "ios") {
-                    fileName = `outputs/ios/${lang}.lproj/Localizable.strings`;
-                }
-                if (platform === "ios_info_plist") {
-                    fileName = `outputs/ios/${lang}.lproj/Info.plist`;
-                    infoPlistFileName = `outputs/ios/${lang}.lproj/InfoPlist.strings`;
-                    fileName2 = `outputs/ios-plist/${lang}.lproj/Info.plist`;
-                    infoPlistFileName2 = `outputs/ios-plist/${lang}.lproj/InfoPlist.strings`;
-                    fs.writeFile(infoPlistFileName, data, (e) => {
-                        if (e) console.log(e);
-                    });
-                    fs.writeFile(fileName2, data, (e) => {
-                        if (e) console.log(e);
-                    });
-                    fs.writeFile(infoPlistFileName2, data, (e) => {
-                        if (e) console.log(e);
-                    });
-                }
-                if (platform === "service") {
-                    fileName = `outputs/service/languages.json`;
-                    let start = `{\n"language": "${lang}",\n"keys": [\n`;
-                    let close = `\n]}${!lastElem ? "," : ""}\n`;
-                    service_data += start + data + close;
-                }
-                if (platform === "android") {
-                    if (lang === "en") {
-                        fs.promises.mkdir(`outputs/android/values`, {
-                            recursive: true
-                        }).catch(console.error);
-                        fileName = `outputs/android/values/strings.xml`;
-                    } else {
-                        let alang = lang
-                        if (lang === "pt-BR") {
-                            alang = "pt-rBR"
-                        }
-                        else if (lang === "ro") {
-                            alang = "ro-rRO"
-                        }
-                        fileName = `outputs/android/values-${alang}/strings.xml`;
+            if (platformName !== PLATFORMS.backend.name || platformName !== PLATFORMS.web.name) {
+
+                var lastElem = false
+
+                for (var j in langCodes) {
+                    if (lastElem === langCodes - 1) {
+                        lastElem = true
                     }
-                    let start = '<?xml version="1.0" encoding="utf-8" standalone="no"?><resources>\n';
-                    let close = '</resources>';
-                    data = start + data + close;
-                }
-                if (platform === "voice_menu") {
-                    fileName = "outputs/voice_menu.txt";
-                    voice_menu_data += data + "\n";
-                }
 
-                if (!(platform === "voice_menu" || platform === "service")) {
-                    fs.writeFile(fileName, data, (e) => {
+                    let lang = langCodes[j];
+                    let data = resource[platformName][lang];
+
+                    if (platformName === PLATFORMS.ios.name) {
+                        fileName = `outputs/ios/${lang}.lproj/Localizable.strings`;
+                    }
+                    if (platformName === PLATFORMS.ios_infoplist.name) {
+                        fileName = `outputs/ios/${lang}.lproj/Info.plist`;
+                        let infoPlistFileName = `outputs/ios/${lang}.lproj/InfoPlist.strings`;
+                        let fileName2 = `outputs/ios-plist/${lang}.lproj/Info.plist`;
+                        let infoPlistFileName2 = `outputs/ios-plist/${lang}.lproj/InfoPlist.strings`;
+                        fs.writeFileSync(infoPlistFileName, data, { flag: 'w' }, (e) => {
+                            if (e) console.log(e);
+                        });
+                        fs.writeFileSync(fileName2, data, { flag: 'w' }, (e) => {
+                            if (e) console.log(e);
+                        });
+                        fs.writeFileSync(infoPlistFileName2, data, { flag: 'w' }, (e) => {
+                            if (e) console.log(e);
+                        });
+                    }
+                    if (platformName === PLATFORMS.android.name) {
+                        if (lang === "en") {
+                            fs.mkdirSync(`outputs/android/values`, { recursive: true })
+                            fileName = `outputs/android/values/strings.xml`;
+                        } else {
+                            fs.mkdirSync(`outputs/android/values-${lang}`, { recursive: true })
+                            fileName = `outputs/android/values-${lang}/strings.xml`;
+                        }
+                        let start = '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n<resources>\n';
+                        let close = '\n</resources>';
+                        data = start + data + close;
+                    }
+
+                    fs.writeFileSync(fileName, data, { flag: 'w' }, (e) => {
                         if (e) console.log(e);
                     });
+
                 }
-
             }
 
-            if (platform === "service") {
-                service_data += `]}`
-                let n = service_data.lastIndexOf("]},")
-                service_data = service_data.substring(0, n)
-                service_data = service_data + "]}]}"
-                console.log(service_data)
-            }
-
-            fs.writeFile("outputs/voice_menu.txt", voice_menu_data, (e) => {
-                if (e) console.log(e);
-            });
-            fs.writeFile("outputs/service/languages.json", service_data, (e) => {
-                if (e) console.log(e);
-            });
-        }
+        })
     }
 
-    async function createDirectories() {
+    function createDirectories() {
         for (var j in langCodes) {
             let lang = langCodes[j];
-            await fs.promises.mkdir(`outputs`, {
+
+            fs.mkdirSync(`outputs`, {
                 recursive: true
-            }).catch(console.error);
+            })
             if (lang === "en") {
-                await fs.promises.mkdir(`outputs/android/values`, {
+                fs.mkdirSync(`outputs/android/values`, {
                     recursive: true
-                }).catch(console.error);
+                })
             } else {
                 let alang = lang
                 if (lang === "pt-BR") {
                     alang = "pt-rBR"
-                }
-                else if (lang === "ro") {
+                } else if (lang === "ro") {
                     alang = "ro-rRO"
                 }
-                await fs.promises.mkdir(`outputs/android/values-${alang}`, {
+                fs.mkdirSync(`outputs/android/values-${alang}`, {
                     recursive: true
-                }).catch(console.error);
+                })
             }
-            await fs.promises.mkdir(`outputs/ios/${lang}.lproj`, {
+            fs.mkdirSync(`outputs/ios/${lang}.lproj`, {
                 recursive: true
-            }).catch(console.error);
-            await fs.promises.mkdir(`outputs/ios-plist/${lang}.lproj`, {
+            })
+            fs.mkdirSync(`outputs/ios-plist/${lang}.lproj`, {
                 recursive: true
-            }).catch(console.error);
-            await fs.promises.mkdir(`outputs/service`, {
-                recursive: true
-            }).catch(console.error);
+            })
         }
     }
 }
