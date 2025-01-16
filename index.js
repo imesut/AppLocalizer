@@ -1,10 +1,24 @@
-// npm run localizer -f Localization.xlsx -p ios/android/web/backend/all -cache_duration 1440/any_minute/0 -document xlsxFileUrl
 
-const args = process.argv
+
+// npm run localizer -f Localization.xlsx -p ios/android/web/backend/all -cache_duration 1440/any_minute/0 -document_url xlsxFileUrl
+
+// Requirements
+
+let XLSX = require('xlsx');
+let fs = require('fs');
+// var https = require('https');
+const {
+    http,
+    https
+} = require('follow-redirects');
+
+const args          = process.argv
 const fileNameIndex = args.indexOf("-f")
 const platformIndex = args.indexOf("-p")
-const cacheIndex = args.indexOf("-cache_duration")
-const documentIndex = args.indexOf("-document")
+const cacheIndex    = args.indexOf("-cache_duration")
+const documentIndex = args.indexOf("-document_url")
+
+// console.log(args)
 
 const PLATFORMS = {
     ios: {
@@ -29,23 +43,11 @@ const PLATFORMS = {
     }
 }
 
-let document = documentIndex > 0 && args[documentIndex + 1] !== undefined ? args[documentIndex + 1] : "https://docs.google.com/spreadsheets/d/e/2PACX-1vR.....B00gysnvSqjzeb592gkE/pub?output=xlsx"
-let fileName = fileNameIndex > 0 && args[fileNameIndex + 1] !== undefined ? args[fileNameIndex + 1] : "Localization.xlsx"
-let platform = platformIndex > 0 && args[platformIndex + 1] !== undefined ? args[platformIndex + 1] : "all"
-let cache = cacheIndex > 0 && args[cacheIndex + 1] !== undefined ? args[cacheIndex + 1] : 1440
+let documentUrl   = documentIndex > 0 && args[documentIndex + 1] !== undefined ? args[documentIndex + 1] : "https://docs.google.com/spreadsheets/d/e/2PACX-1vR.....B00gysnvSqjzeb592gkE/pub?output=xlsx"
+let fileName      = fileNameIndex > 0 && args[fileNameIndex + 1] !== undefined ? args[fileNameIndex + 1] : "Localization.xlsx"
+let platform      = platformIndex > 0 && args[platformIndex + 1] !== undefined ? args[platformIndex + 1] : "all"
+let cacheDuration = cacheIndex    > 0 && args[cacheIndex + 1]    !== undefined ? args[cacheIndex + 1]    : 1440
 
-// TODO: logic to download localization file.
-
-
-// Requirements
-
-let XLSX = require('xlsx');
-let fs = require('fs');
-// var https = require('https');
-const {
-    http,
-    https
-} = require('follow-redirects');
 
 // Replace All Method
 String.prototype.replaceAll = function (search, replacement) {
@@ -53,7 +55,16 @@ String.prototype.replaceAll = function (search, replacement) {
     return target.replace(new RegExp(search, 'g'), replacement);
 };
 
-generateLocalization();
+
+// Renew or reuse localization excel file.
+if (shouldRenewCache()) {
+    renewCache().then(() => {
+        generateLocalization();
+    })
+} else {
+    console.log('Using existing localization cache...')
+    generateLocalization();
+}
 
 // TODO: update for params
 // TODO: xcstringcatalog support
@@ -62,12 +73,10 @@ function generateLocalization() {
     // Read cached file.
     let table = XLSX.readFile(fileName);
 
-
-
     // First Sheet: Localisations
     let sheet = table.Sheets[table.SheetNames[0]];
     let list = XLSX.utils.sheet_to_json(sheet);
-    let platformNamesForSeparateFileLocalizations = [PLATFORMS.android.name, PLATFORMS.ios.name]
+    let platformNamesForSeparateFileLocalizations = [PLATFORMS.android.name, PLATFORMS.ios.name, PLATFORMS.ios_infoplist.name]
 
     let headers = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0]
     let langCodes = headers.filter(name => !name.endsWith("_key"))
@@ -126,6 +135,7 @@ function generateLocalization() {
             if (!!row[PLATFORMS.android.key]) resource.android[langCode] += processText(PLATFORMS.android, langCode, row[PLATFORMS.android.key], row[langCode], lastElem);
             if (!!row[PLATFORMS.ios.key]) {
                 if (String(row[PLATFORMS.ios.key]).startsWith("NS")) {
+                    console.log("NSKEY", row[PLATFORMS.ios.key], langCode)
                     resource.ios_infoplist[langCode] += processText(PLATFORMS.ios_infoplist, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
                 } else {
                     resource.ios[langCode] += processText(PLATFORMS.ios, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
@@ -209,6 +219,8 @@ function generateLocalization() {
                     let lang = langCodes[j];
                     let data = resource[platformName][lang];
 
+                    console.log(data)
+
                     if (platformName === PLATFORMS.ios.name) {
                         fileName = `outputs/ios/${lang}.lproj/Localizable.strings`;
                     }
@@ -286,3 +298,53 @@ function generateLocalization() {
 NOTES
 - New line automatically comes as \n from XLSX
 */
+
+
+
+function shouldRenewCache() {
+    if (fs.existsSync(fileName)) {
+        //cacheDuration as minutes => miliseconds
+        let maxAge = cacheDuration * 60 * 1000;
+        const stats = fs.statSync(fileName);
+        const lastModifiedTime = new Date(stats.mtime).getTime();
+        const currentTime = Date.now();
+        console.log(lastModifiedTime, currentTime, maxAge)
+        if (currentTime - lastModifiedTime > maxAge) {
+            return true
+        } else {
+            return false
+        }
+    } else {
+        return true
+    }
+}
+
+function renewCache() {
+
+    return new Promise((resolve, reject) => {
+
+        console.log('Renewing localization cache...', fileName)
+
+        const file = fs.createWriteStream(fileName)
+
+        https.get(documentUrl, response => {
+
+            if (response.statusCode !== 200) {
+                reject()
+            }
+            response.pipe(file);
+
+            file.on('finish', () => {
+                file.close(resolve);
+                resolve()
+            });
+
+            file.on('error', err => {
+                fs.unlink(fileName); // Delete the file on error
+                reject()
+            });
+        })
+
+    })
+
+}
