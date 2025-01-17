@@ -1,6 +1,9 @@
+const { PLATFORMS, IOS_TYPE, IOS_OUT_TYPE } = require("./constants.js")
+console.log(IOS_OUT_TYPE)
+const normalizer = require("./normalizer.js");
 
 
-// npm run localizer -f Localization.xlsx -p ios/android/web/backend/all -cache_duration 1440/any_minute/0 -document_url xlsxFileUrl
+// npm run localizer -f Localization.xlsx -p ios/android/web/backend/all -cache_duration 1440/any_minute/0 -document_url xlsxFileUrl -ios_output catalog/list
 
 // Requirements
 
@@ -12,48 +15,20 @@ const {
     https
 } = require('follow-redirects');
 
-const args          = process.argv
+const iosStringCatalogProcessor = require("./iosStringCatalogProcessor");
+
+const args = process.argv
 const fileNameIndex = args.indexOf("-f")
 const platformIndex = args.indexOf("-p")
-const cacheIndex    = args.indexOf("-cache_duration")
+const cacheIndex = args.indexOf("-cache_duration")
 const documentIndex = args.indexOf("-document_url")
+const iosOutTypeIndex = args.indexOf("-ios_output")
 
-// console.log(args)
-
-const PLATFORMS = {
-    ios: {
-        name: "ios",
-        key: "ios_key"
-    },
-    ios_infoplist: {
-        name: "ios_infoplist",
-        key: "ios_infoplist_key"
-    },
-    android: {
-        name: "android",
-        key: "android_key"
-    },
-    web: {
-        name: "web",
-        key: "web_key"
-    },
-    backend: {
-        name: "backend",
-        key: "backend_key"
-    }
-}
-
-let documentUrl   = documentIndex > 0 && args[documentIndex + 1] !== undefined ? args[documentIndex + 1] : "https://docs.google.com/spreadsheets/d/e/2PACX-1vR.....B00gysnvSqjzeb592gkE/pub?output=xlsx"
-let fileName      = fileNameIndex > 0 && args[fileNameIndex + 1] !== undefined ? args[fileNameIndex + 1] : "Localization.xlsx"
-let platform      = platformIndex > 0 && args[platformIndex + 1] !== undefined ? args[platformIndex + 1] : "all"
-let cacheDuration = cacheIndex    > 0 && args[cacheIndex + 1]    !== undefined ? args[cacheIndex + 1]    : 1440
-
-
-// Replace All Method
-String.prototype.replaceAll = function (search, replacement) {
-    var target = this;
-    return target.replace(new RegExp(search, 'g'), replacement);
-};
+let documentUrl = documentIndex > 0 && args[documentIndex + 1] !== undefined ? args[documentIndex + 1] : "https://docs.google.com/spreadsheets/d/e/2PACX-1vR.....B00gysnvSqjzeb592gkE/pub?output=xlsx"
+let fileName = fileNameIndex > 0 && args[fileNameIndex + 1] !== undefined ? args[fileNameIndex + 1] : "Localization.xlsx"
+let platform = platformIndex > 0 && args[platformIndex + 1] !== undefined ? args[platformIndex + 1] : "all"
+let cacheDuration = cacheIndex > 0 && args[cacheIndex + 1] !== undefined ? args[cacheIndex + 1] : 1440
+let iosOutType = iosOutTypeIndex > 0 && args[iosOutTypeIndex + 1] !== undefined ? args[iosOutTypeIndex + 1] : IOS_OUT_TYPE.CATALOG
 
 
 // Renew or reuse localization excel file.
@@ -76,11 +51,25 @@ function generateLocalization() {
     // First Sheet: Localisations
     let sheet = table.Sheets[table.SheetNames[0]];
     let list = XLSX.utils.sheet_to_json(sheet);
-    let platformNamesForSeparateFileLocalizations = [PLATFORMS.android.name, PLATFORMS.ios.name, PLATFORMS.ios_infoplist.name]
+
+    var platformNamesForSeparateFileLocalizations = [PLATFORMS.android.name]
+    
+    if (iosOutType === IOS_OUT_TYPE.LIST) {
+        platformNamesForSeparateFileLocalizations.push(PLATFORMS.ios.name)
+        platformNamesForSeparateFileLocalizations.push(PLATFORMS.ios_infoplist.name)
+    }
 
     let headers = XLSX.utils.sheet_to_json(sheet, { header: 1 })[0]
     let langCodes = headers.filter(name => !name.endsWith("_key"))
 
+    var iosLocales = {}
+    var iosPlistLocales = {}
+
+    if (iosOutType === IOS_OUT_TYPE.CATALOG) {
+        iosLocales = iosStringCatalogProcessor.process(list, langCodes, PLATFORMS.ios.key, IOS_TYPE.LOCALIZATION);
+        iosPlistLocales = iosStringCatalogProcessor.process(list, langCodes, PLATFORMS.ios.key, IOS_TYPE.PLIST);
+    }
+    
     // Platforms with single localization file
     let backendList = list.filter(item => item[PLATFORMS.backend.key] !== undefined)
         .map(item => {
@@ -95,8 +84,6 @@ function generateLocalization() {
             langCodes.forEach(lang => returnItem[lang] = item[lang]);
             return { [item[PLATFORMS.web.key]]: returnItem };
         });
-
-
 
     // Platforms with separate localization files
     // initialize object with platform sub objects
@@ -133,16 +120,21 @@ function generateLocalization() {
             let langCode = langCodes[j];
 
             if (!!row[PLATFORMS.android.key]) resource.android[langCode] += processText(PLATFORMS.android, langCode, row[PLATFORMS.android.key], row[langCode], lastElem);
-            if (!!row[PLATFORMS.ios.key]) {
-                if (String(row[PLATFORMS.ios.key]).startsWith("NS")) {
-                    console.log("NSKEY", row[PLATFORMS.ios.key], langCode)
-                    resource.ios_infoplist[langCode] += processText(PLATFORMS.ios_infoplist, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
-                } else {
-                    resource.ios[langCode] += processText(PLATFORMS.ios, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
+
+            if (iosOutType === IOS_OUT_TYPE.LIST) {
+                if (!!row[PLATFORMS.ios.key]) {
+                    if (String(row[PLATFORMS.ios.key]).startsWith("NS")) {
+                        // console.log("NSKEY", row[PLATFORMS.ios.key], langCode)
+                        resource.ios_infoplist[langCode] += processText(PLATFORMS.ios_infoplist, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
+                    } else {
+                        resource.ios[langCode] += processText(PLATFORMS.ios, langCode, row[PLATFORMS.ios.key], row[langCode], lastElem);
+                    }
                 }
             }
         }
     }
+
+
 
     /*{{А-2}}
     Text Helper Funtion
@@ -151,38 +143,11 @@ function generateLocalization() {
         value = String(value).replaceAll("\n", "\\n");
         switch (platform.name) {
             case PLATFORMS.android.name:
-                if (lang === "ar") {
-                    // This dirty hack will be solved as {{O-n}} & {{O}} replacement rather than {{0-n}} {{0}}
-                    value = value.replaceAll('\{\{(O-)([0-9])\}\}', '%$2$d'); //{{O-n}}
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', '%$2$d'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', '%$2$s'); //{{A-n}}
-                    value = value.replaceAll('\{\{(0)\}\}', '%d'); //{{0}}
-                    value = value.replaceAll('\{\{(A)\}\}', '%s'); // {{A}}
-                } else {
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', '%$2$d'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', '%$2$s'); //{{A-n}}
-                    value = value.replaceAll('\{\{(0)\}\}', '%d'); //{{0}}
-                    value = value.replaceAll('\{\{(A)\}\}', '%s'); // {{A}}
-                }
-                value = value.replaceAll("'", String.fromCharCode(92) + "'");
-                value = value.replaceAll('"', String.fromCharCode(92) + '"');
+                value = normalizer.normalizeStringValue(platform, lang, value)
                 return `<string name="${key}">${value}</string>\n`;
             case PLATFORMS.ios_infoplist.name:
             case PLATFORMS.ios.name:
-                if (lang === "ar") {
-                    // This dirty hack will be solved as {{O-n}} & {{O}} replacement rather than {{0-n}} {{0}}
-                    value = value.replaceAll('\{\{(O-)([0-9])\}\}', 'arabicparam:%$2$d'); //{{O-n}}
-                    value = value.replaceAll('\{\{(O)([0-9])\}\}', 'arabicparam:%$2$d'); //{{O-n}}
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', 'arabicparam:%$2$d%'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', 'arabicparam:%$2$@'); //{{A-n}} 
-                } else {
-                    value = value.replaceAll('\{\{(0-)([0-9])\}\}', '%$2$d'); //{{0-n}}
-                    value = value.replaceAll('\{\{(A-)([0-9])\}\}', '%$2$@'); //{{A-n}} 
-                }
-                value = value.replaceAll('\{\{(0)\}\}', '%d'); //{{0}}
-                value = value.replaceAll('\{\{(O)\}\}', '%d'); //{{0}}
-                value = value.replaceAll('\{\{(A)\}\}', '%@'); //{{A}}                    
-                value = value.replaceAll('"', String.fromCharCode(92) + '"');
+                value = normalizer.normalizeStringValue(platform, lang, value)
                 return `"${key}" = "${value}";\n`;
             default:
                 return;
@@ -191,11 +156,21 @@ function generateLocalization() {
 
     writeFiles();
 
-    fs.writeFileSync("outputs/backend.json", JSON.stringify(backendList, null, 4), { flag: 'w' }, (e) => {
+    if (iosOutType === IOS_OUT_TYPE.CATALOG) {
+        fs.writeFileSync("outputs/ios/Localizable.xcstrings", JSON.stringify(iosLocales, null, 2), { flag: 'w' }, (e) => {
+            if (e) console.log(e);
+        });
+
+        fs.writeFileSync("outputs/ios/InfoPlist.xcstrings", JSON.stringify(iosPlistLocales, null, 2), { flag: 'w' }, (e) => {
+            if (e) console.log(e);
+        });
+    }
+
+    fs.writeFileSync("outputs/backend.json", JSON.stringify(backendList, null, 2), { flag: 'w' }, (e) => {
         if (e) console.log(e);
     });
 
-    fs.writeFileSync("outputs/web.json", JSON.stringify(webList, null, 4), { flag: 'w' }, (e) => {
+    fs.writeFileSync("outputs/web.json", JSON.stringify(webList, null, 2), { flag: 'w' }, (e) => {
         if (e) console.log(e);
     });
 
@@ -219,7 +194,7 @@ function generateLocalization() {
                     let lang = langCodes[j];
                     let data = resource[platformName][lang];
 
-                    console.log(data)
+                    // console.log(data)
 
                     if (platformName === PLATFORMS.ios.name) {
                         fileName = `outputs/ios/${lang}.lproj/Localizable.strings`;
@@ -263,6 +238,9 @@ function generateLocalization() {
     }
 
     function createDirectories() {
+
+        fs.rmSync("outputs", { recursive: true } )
+
         for (var j in langCodes) {
             let lang = langCodes[j];
 
@@ -284,12 +262,18 @@ function generateLocalization() {
                     recursive: true
                 })
             }
-            fs.mkdirSync(`outputs/ios/${lang}.lproj`, {
-                recursive: true
-            })
-            fs.mkdirSync(`outputs/ios-plist/${lang}.lproj`, {
-                recursive: true
-            })
+
+            fs.mkdirSync(`outputs/ios/`, { recursive: true })
+
+            if (iosOutType === IOS_OUT_TYPE.LIST) {
+
+                fs.mkdirSync(`outputs/ios/${lang}.lproj`, {
+                    recursive: true
+                })
+                fs.mkdirSync(`outputs/ios-plist/${lang}.lproj`, {
+                    recursive: true
+                })
+            }
         }
     }
 }
